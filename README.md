@@ -40,3 +40,69 @@ Think of it like an assembly line:
 - **Worker 2 (main function)**: Takes lines and prints them.
 
 Each worker does their job concurrently, but the processing order is maintained.
+
+## Use Sequential When:
+
+```go
+func getLines(f io.ReadCloser) []string {
+    defer f.Close()
+    
+    var lines []string
+    data := make([]byte, 8)
+    currentLine := ""
+    
+    for {
+        count, err := f.Read(data)
+        if err == io.EOF {
+            if currentLine != "" {
+                lines = append(lines, currentLine)
+            }
+            break
+        }
+        if err != nil {
+            fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
+            break
+        }
+        
+        chunk := string(data[:count])
+        parts := strings.Split(chunk, "\n")
+        
+        for i := 0; i < len(parts)-1; i++ {
+            currentLine += parts[i]
+            lines = append(lines, currentLine)
+            currentLine = ""
+        }
+        
+        currentLine += parts[len(parts)-1]
+    }
+    
+    return lines
+}
+
+func main() {
+    file, err := os.Open("messages.txt")
+    if err != nil {
+        fmt.Fprintf(os.Stderr, "Error opening file: %v\n", err)
+        os.Exit(1)
+    }
+    
+    lines := getLines(file)
+    
+    for _, line := range lines {
+        fmt.Printf("read: %s\n", line)
+    }
+}
+```
+
+### Files are small
+
+Code simplicity is a priority
+Complete data is needed before processing can begin
+Use Goroutines/Channels When:
+
+### Files are large
+
+Processing can start with partial data
+You want to utilize IO waiting time
+You need to process streams (like network connections)
+You're building a pipeline of operations
