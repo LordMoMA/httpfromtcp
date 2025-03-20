@@ -98,7 +98,8 @@ func main() {
 
 Code simplicity is a priority
 Complete data is needed before processing can begin
-Use Goroutines/Channels When:
+
+## Use Goroutines/Channels When:
 
 ### Files are large
 
