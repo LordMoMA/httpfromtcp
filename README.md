@@ -107,3 +107,47 @@ Processing can start with partial data
 You want to utilize IO waiting time
 You need to process streams (like network connections)
 You're building a pipeline of operations
+
+## For UDP
+
+### Reader Inside vs. Outside the Loop
+
+```go
+// Option 1: Create reader each time
+for {
+    line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+    // ...
+}
+
+// Option 2: Create reader once
+reader := bufio.NewReader(os.Stdin)
+for {
+    line, err := reader.ReadString('\n')
+    // ...
+}
+```
+
+
+
+### Memory allocation: 
+
+Option 1 creates a new reader on every loop iteration, which means:
+
+- New memory allocation each time
+- More work for garbage collection
+- Slightly higher CPU usage
+
+### Buffer reuse: 
+
+Option 2 reuses the same reader, which means:
+
+The internal buffer gets reused
+Less memory churn
+More efficient
+
+### State: 
+
+The reader maintains internal state about its buffer. When created outside the loop:
+
+- It can use information from previous reads to optimize future reads
+- Better handling of partial reads (if a read doesn't consume all data)
