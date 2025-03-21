@@ -110,6 +110,14 @@ You're building a pipeline of operations
 
 ## For UDP
 
+```bash
+# in one terminal
+go run ./cmd/udpsender
+
+# in another terminal
+nc -ul 42069
+```
+
 ### Reader Inside vs. Outside the Loop
 
 ```go
