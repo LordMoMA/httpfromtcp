@@ -6,9 +6,11 @@ import (
 	"strings"
 )
 
+// iota is a special keyword in Go that generates a sequence of integers starting from 0.
+// https://go.dev/wiki/Iota
 const (
-	StateInitialized = iota // Parser state: initialized
-	StateDone               // Parser state: done
+	StateInitialized = iota // Parser state: initialized, is assigned the value 0
+	StateDone               // Parser state: done, is assigned the value 1
 )
 
 const bufferSize = 8 // Initial buffer size for reading data
@@ -19,9 +21,9 @@ type Request struct {
 }
 
 type RequestLine struct {
-	HttpVersion   string
-	RequestTarget string
-	Method        string
+	HttpVersion   string // "1.1"
+	RequestTarget string // "/coffee"
+	Method        string // "GET", "POST", "PATCH", "PUT", or "DELETE"
 }
 
 func RequestFromReader(reader io.Reader) (*Request, error) {
@@ -43,7 +45,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 			return nil, err
 		}
 
-		readToIndex += n
+		readToIndex += n // Update the number of bytes read
 
 		// Parse the data
 		consumed, err := request.parseAndUpdateState(buf[:readToIndex])
@@ -53,7 +55,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 		// Remove parsed data from the buffer
 		copy(buf, buf[consumed:])
-		readToIndex -= consumed
+		readToIndex -= consumed // Update the number of bytes left in the buffer. e.g. if 8 bytes are read and 4 bytes are consumed, 4 bytes are left in the buffer
 
 		// If parsing is done, return the request
 		if request.state == StateDone {
