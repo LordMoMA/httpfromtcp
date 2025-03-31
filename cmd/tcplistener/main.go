@@ -2,12 +2,12 @@ package main
 
 import (
 	"fmt"
-	"io"
+	"httpfromtcp/internal/request"
 	"net"
 	"os"
-	"strings"
 )
 
+/*
 func getLinesChannel(f io.ReadCloser) <-chan string {
 	lines := make(chan string)
 
@@ -52,6 +52,7 @@ func getLinesChannel(f io.ReadCloser) <-chan string {
 
 	return lines
 }
+*/
 
 func main() {
 	listener, err := net.Listen("tcp", "localhost:42069")
@@ -73,12 +74,24 @@ func main() {
 		fmt.Println("Connection accepted")
 
 		// Get a channel of lines from the connection
-		linesChan := getLinesChannel(conn)
+		// linesChan := getLinesChannel(conn)
+
+		// When we call request.RequestFromReader(conn), it uses the Read method from net.Conn interface
+		req, err := request.RequestFromReader(conn)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading request: %v\n", err)
+			conn.Close()
+			continue // Continue to the next iteration instead of exiting
+		}
 
 		// Range over the channel and print each line
-		for line := range linesChan {
-			fmt.Println(line) // Just print the line without "read:" prefix
-		}
+		// for line := range linesChan {
+		// 	fmt.Println(line) // Just print the line without "read:" prefix
+		// }
+
+		// Print the request details
+		fmt.Printf("Method: %s, Target: %s, HTTP Version: %s\n",
+			req.RequestLine.Method, req.RequestLine.RequestTarget, req.RequestLine.HttpVersion)
 
 		fmt.Println("Connection closed")
 	}
