@@ -14,7 +14,7 @@ func TestRequestLineParse(t *testing.T) {
 		data:            "GET / HTTP/1.1\r\nHost: localhost:42069\r\nUser-Agent: curl/7.81.0\r\nAccept: */*\r\n\r\n",
 		numBytesPerRead: 3,
 	}
-	r, err := RequestFromReader(reader)
+	r, err := RequestFromReader(reader) // reader is treated as io.Reader
 	require.NoError(t, err)
 	require.NotNil(t, r)
 	assert.Equal(t, "GET", r.RequestLine.Method)
@@ -91,13 +91,34 @@ func TestRequestLineParse(t *testing.T) {
 }
 
 type chunkReader struct {
-	data            string
-	numBytesPerRead int
-	pos             int
+	data            string // The test data we want to simulate
+	numBytesPerRead int    // Simulate reading chunks of specific size
+	pos             int    // Track position in the test data
 }
 
 // Read reads up to len(p) or numBytesPerRead bytes from the string per call
 // its useful for simulating reading a variable number of bytes per chunk from a network connection
+/*
+Even though chunkReader is a struct type, it implements the io.Reader interface because it has a Read method with the exact signature required:
+
+Interface Satisfaction: In Go, you don't need to explicitly declare that a type implements an interface. If a type has all the methods that an interface specifies, it automatically implements that interface.
+
+chunkReader is a type (struct)
+*chunkReader (pointer to chunkReader) implements io.Reader
+When we pass reader to RequestFromReader, Go sees that it implements all methods required by io.Reader
+Therefore, it can be used wherever an io.Reader is expected
+This is called implicit interface implementation in Go.
+
+
+Explicit vs Implicit:
+
+Go: Types automatically implement interfaces if they have matching methods
+Rust: Must use impl Trait for Type to explicitly declare implementations
+Safety and Clarity:
+
+Go: More flexible but can lead to accidental implementations
+Rust: More verbose but clearer about intentions and prevents accidental implementations
+*/
 func (cr *chunkReader) Read(p []byte) (n int, err error) {
 	if cr.pos >= len(cr.data) {
 		return 0, io.EOF

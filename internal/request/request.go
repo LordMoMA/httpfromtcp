@@ -40,6 +40,7 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		}
 
 		// Read data into the buffer
+		// When we call reader.Read(buf[readToIndex:]) in request.go ), the actual Read implementation used depends on what type of reader was passed in.
 		n, err := reader.Read(buf[readToIndex:])
 		if err != nil && err != io.EOF {
 			return nil, err
