@@ -1,3 +1,13 @@
+# How to Run the Project
+
+```bash
+# in one terminal
+go run ./cmd/tcplistener | tee /tmp/requestline.txt
+
+# in another one
+curl http://localhost:42069/david/lee
+```
+
 # Why Use a Goroutine Here?
 
 You're right that the file must be read sequentially—we can't process data before reading it. The goroutine here doesn't mean things happen out of order; it means:
