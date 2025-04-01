@@ -2,20 +2,23 @@ package headers
 
 import (
 	"fmt"
+	"testing"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestParse(t *testing.T) {
 	t.Run("Valid single header", func(t *testing.T) {
 		headers := NewHeaders()
 		data := []byte("Host: localhost:42069\r\n")
+		fmt.Println("data: ", data)
+		fmt.Printf("data: %q, length: %d\n", data, len(data))
 		n, done, err := headers.Parse(data)
 
 		require.NoError(t, err)
 		require.NotNil(t, headers)
-		assert.Equal(t, "localhost:42069", headers["Host"])
+		assert.Equal(t, "localhost:42069", headers["host"])
 		assert.Equal(t, 23, n)
 		assert.False(t, done)
 	})
@@ -28,7 +31,7 @@ func TestParse(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, headers)
-		assert.Equal(t, "application/json", headers["Content-Type"])
+		assert.Equal(t, "application/json", headers["content-type"])
 		assert.Equal(t, 37, n)
 		assert.False(t, done)
 	})
@@ -36,7 +39,7 @@ func TestParse(t *testing.T) {
 	t.Run("Valid 2 headers with existing headers", func(t *testing.T) {
 		// First, add one header
 		headers := NewHeaders()
-		headers["Already-Present"] = "value"
+		headers["already-present"] = "value"
 
 		// Parse first header
 		data1 := []byte("Content-Type: text/html\r\n")
@@ -55,9 +58,9 @@ func TestParse(t *testing.T) {
 		assert.False(t, done2)
 
 		// Verify all headers are present
-		assert.Equal(t, "value", headers["Already-Present"])
-		assert.Equal(t, "text/html", headers["Content-Type"])
-		assert.Equal(t, "256", headers["Content-Length"])
+		assert.Equal(t, "value", headers["already-present"])
+		assert.Equal(t, "text/html", headers["content-type"])
+		assert.Equal(t, "256", headers["content-length"])
 		assert.Equal(t, 3, len(headers))
 	})
 
@@ -125,4 +128,26 @@ func TestParse(t *testing.T) {
 		assert.Equal(t, 0, n)
 		assert.False(t, done)
 	})
+
+	t.Run("invalid character in header key", func(t *testing.T) {
+		headers := NewHeaders()
+		data := []byte("H@st: localhost:42069\r\n")
+		n, done, err := headers.Parse(data)
+
+		require.Error(t, err)
+		assert.Equal(t, 0, n)
+		assert.False(t, done)
+	})
+
+	/*
+		a field-name must contain only:
+
+		Uppercase letters: A-Z
+		Lowercase letters: a-z
+		Digits: 0-9
+		Special characters: !, #, $, %, &, ', *, +, -, ., ^, _, `, |, ~
+		and at least a length of 1.
+
+	*/
+
 }

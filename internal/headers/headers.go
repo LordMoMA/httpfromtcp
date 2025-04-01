@@ -3,6 +3,7 @@ package headers
 import (
 	"errors"
 	"strings"
+	"unicode"
 )
 
 type Headers map[string]string
@@ -13,10 +14,31 @@ const (
 )
 
 var (
-	ErrInvalidData         = errors.New("invalid headers, expected data")
-	ErrInvalidSpacing      = errors.New("invalid spacing header")
-	ErrMalformedHeaderLine = errors.New("malformed header line")
+	ErrInvalidData            = errors.New("invalid headers, expected data")
+	ErrInvalidSpacing         = errors.New("invalid spacing header")
+	ErrMalformedHeaderLine    = errors.New("malformed header line")
+	ErrInvalidHeaderFieldName = errors.New("invalid character in header field name")
 )
+
+func isValidHeaderFieldChar(r rune) bool {
+	return unicode.IsLetter(r) ||
+		unicode.IsDigit(r) ||
+		strings.ContainsRune("!#$%&'*+-.^_`|~", r)
+}
+
+func isValidHeaderFieldName(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+
+	for _, r := range name {
+		if !isValidHeaderFieldChar(r) {
+			return false
+		}
+	}
+
+	return true
+}
 
 func NewHeaders() Headers {
 	return make(map[string]string)
@@ -32,7 +54,6 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 		return 2, true, nil
 	}
 
-	// Look for line ending
 	lineEnd := strings.Index(string(data), crlf)
 	if lineEnd == -1 {
 		return 0, false, nil // Need more data
@@ -51,7 +72,12 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 		return 0, false, ErrInvalidSpacing
 	}
 
-	key := strings.TrimSpace(line[:colonIdx])
+	rawKey := strings.TrimSpace(line[:colonIdx])
+	if !isValidHeaderFieldName(rawKey) {
+		return 0, false, ErrInvalidHeaderFieldName
+	}
+
+	key := strings.ToLower(rawKey)
 	value := strings.TrimSpace(line[colonIdx+1:])
 
 	// Store the header
