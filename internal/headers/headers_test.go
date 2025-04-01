@@ -1,6 +1,7 @@
 package headers
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,6 +13,8 @@ func TestParse(t *testing.T) {
 	// Test: Valid single header
 	headers := NewHeaders()
 	data := []byte("Host: localhost:42069\r\n\r\n")
+	print("data is", data, "\n")
+	fmt.Printf("data string: %s", string(data))
 	n, done, err := headers.Parse(data)
 	require.NoError(t, err)
 	require.NotNil(t, headers)

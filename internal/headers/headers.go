@@ -22,12 +22,15 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 		return 0, false, errors.New("invalid spacing header")
 	}
 
-	lineEnd := strings.Index(string(data), "\r\n\r\n")
+	lineEnd := strings.Index(string(data), "\r\n")
 	if lineEnd == -1 {
 		return 0, false, nil
 	}
 
-	count := lineEnd + 1
+	count := lineEnd + 2
 
-	return count, true, nil
+	slice := strings.Split(string(data)[:lineEnd], ":")
+	h[slice[0]] = strings.TrimPrefix(slice[1], " ") + ":" + slice[2]
+
+	return count, false, nil
 }
