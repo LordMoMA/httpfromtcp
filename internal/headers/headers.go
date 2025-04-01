@@ -80,8 +80,11 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	key := strings.ToLower(rawKey)
 	value := strings.TrimSpace(line[colonIdx+1:])
 
-	// Store the header
-	h[key] = value
+	if val, ok := h[key]; ok {
+		h[key] = val + ", " + value
+	} else {
+		h[key] = value
+	}
 
 	return lineEnd + 2, false, nil
 }

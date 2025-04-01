@@ -8,6 +8,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+/*
+	a field-name must contain only:
+
+	Uppercase letters: A-Z
+	Lowercase letters: a-z
+	Digits: 0-9
+	Special characters: !, #, $, %, &, ', *, +, -, ., ^, _, `, |, ~
+	and at least a length of 1.
+
+	When parsing a single header like "Host: localhost:42069\r\n", you've successfully parsed one header, but you haven't reached the end of the headers section
+
+	More headers might follow
+	Only when you encounter \r\n at the start of input data have you reached the end of all headers
+*/
+
 func TestParse(t *testing.T) {
 	t.Run("Valid single header", func(t *testing.T) {
 		headers := NewHeaders()
@@ -139,15 +154,32 @@ func TestParse(t *testing.T) {
 		assert.False(t, done)
 	})
 
-	/*
-		a field-name must contain only:
+	t.Run("Handle multiple values for same header", func(t *testing.T) {
+		headers := NewHeaders()
 
-		Uppercase letters: A-Z
-		Lowercase letters: a-z
-		Digits: 0-9
-		Special characters: !, #, $, %, &, ', *, +, -, ., ^, _, `, |, ~
-		and at least a length of 1.
+		// First header
+		data1 := []byte("Set-Person: dave-loves-severance\r\n")
+		n1, done1, err1 := headers.Parse(data1)
+		require.NoError(t, err1)
+		assert.Equal(t, 34, n1)
+		assert.False(t, done1)
 
-	*/
+		// Second header with same key
+		data2 := []byte("Set-Person: david-loves-rust\r\n")
+		n2, done2, err2 := headers.Parse(data2)
+		require.NoError(t, err2)
+		assert.Equal(t, 30, n2)
+		assert.False(t, done2)
+
+		// Third header with same key
+		data3 := []byte("Set-Person: helen-likes-hotels\r\n")
+		n3, done3, err3 := headers.Parse(data3)
+		require.NoError(t, err3)
+		assert.Equal(t, 32, n3)
+		assert.False(t, done3)
+
+		// Check concatenated value
+		assert.Equal(t, "dave-loves-severance, david-loves-rust, helen-likes-hotels", headers["set-person"])
+	})
 
 }
