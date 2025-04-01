@@ -7,30 +7,55 @@ import (
 
 type Headers map[string]string
 
+const (
+	headerSeparator = ":"
+	crlf            = "\r\n"
+)
+
+var (
+	ErrInvalidData         = errors.New("invalid headers, expected data")
+	ErrInvalidSpacing      = errors.New("invalid spacing header")
+	ErrMalformedHeaderLine = errors.New("malformed header line")
+)
+
 func NewHeaders() Headers {
-	res := map[string]string{}
-	return res
+	return make(map[string]string)
 }
 
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	if len(data) == 0 {
-		return 0, false, errors.New("invalid headers, expected data")
+		return 0, false, ErrInvalidData
 	}
 
-	colonIdx := strings.Index(string(data), ":")
-	if string(data[colonIdx-1]) == " " {
-		return 0, false, errors.New("invalid spacing header")
+	// Check if we've reached the end of headers
+	if strings.HasPrefix(string(data), crlf) {
+		return 2, true, nil
 	}
 
-	lineEnd := strings.Index(string(data), "\r\n")
+	// Look for line ending
+	lineEnd := strings.Index(string(data), crlf)
 	if lineEnd == -1 {
-		return 0, false, nil
+		return 0, false, nil // Need more data
 	}
 
-	count := lineEnd + 2
+	line := string(data[:lineEnd])
 
-	slice := strings.Split(string(data)[:lineEnd], ":")
-	h[slice[0]] = strings.TrimPrefix(slice[1], " ") + ":" + slice[2]
+	// Split header line into key and value
+	colonIdx := strings.Index(line, headerSeparator)
+	if colonIdx == -1 || colonIdx == 0 {
+		return 0, false, ErrMalformedHeaderLine
+	}
 
-	return count, false, nil
+	// Check for invalid spacing before colon
+	if strings.HasSuffix(line[:colonIdx], " ") {
+		return 0, false, ErrInvalidSpacing
+	}
+
+	key := strings.TrimSpace(line[:colonIdx])
+	value := strings.TrimSpace(line[colonIdx+1:])
+
+	// Store the header
+	h[key] = value
+
+	return lineEnd + 2, false, nil
 }
