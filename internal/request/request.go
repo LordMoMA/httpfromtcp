@@ -13,8 +13,9 @@ import (
 // https://go.dev/wiki/Iota
 const (
 	StateInitialized = iota // Parser state: initialized, is assigned the value 0
-	StateDone               // Parser state: done, is assigned the value 1
-	requestStateParsingHeaders
+	StateParsingRequestLine
+	StateParsingHeaders
+	StateDone // Parser state: done, is assigned the value 3
 )
 
 const bufferSize = 8 // Initial buffer size for reading data
@@ -45,13 +46,19 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		}
 
 		// Read data into the buffer
-		// When we call reader.Read(buf[readToIndex:]) in request.go ), the actual Read implementation used depends on what type of reader was passed in.
 		n, err := reader.Read(buf[readToIndex:])
-		if err != nil && err != io.EOF {
+		readToIndex += n // Update the number of bytes read
+
+		// Check for EOF immediately after reading
+		if err == io.EOF {
+			// If we've reached EOF but parsing isn't done, it's an incomplete request
+			if request.state != StateDone {
+				return nil, errors.New("incomplete request")
+			}
+		} else if err != nil {
+			// Handle other errors
 			return nil, err
 		}
-
-		readToIndex += n // Update the number of bytes read
 
 		// Parse the data
 		consumed, err := request.parseAndUpdateState(buf[:readToIndex])
@@ -61,16 +68,16 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 
 		// Remove parsed data from the buffer
 		copy(buf, buf[consumed:])
-		readToIndex -= consumed // Update the number of bytes left in the buffer. e.g. if 8 bytes are read and 4 bytes are consumed, 4 bytes are left in the buffer
+		readToIndex -= consumed
 
 		// If parsing is done, return the request
 		if request.state == StateDone {
 			break
 		}
 
-		// If EOF is reached and parsing is not done, return an error
-		if err == io.EOF {
-			return nil, errors.New("incomplete request")
+		// If we didn't read anything and didn't consume anything, we're stuck
+		if n == 0 && consumed == 0 {
+			return nil, errors.New("no progress in reading or parsing")
 		}
 	}
 
@@ -82,34 +89,68 @@ func (r *Request) parseAndUpdateState(data []byte) (int, error) {
 		return 0, errors.New("error: trying to read data in a done state")
 	}
 
-	lineEnd := strings.Index(string(data), "\r\n\r\n")
-	if lineEnd == -1 {
-		// Not enough data to parse the request line
-		return 0, nil
+	totalBytesParsed := 0
+	for r.state != StateDone {
+		n, err := r.parseSingle(data[totalBytesParsed:])
+		if err != nil {
+			return totalBytesParsed, err
+		}
+
+		if n == 0 {
+			// Need more data
+			break
+		}
+
+		totalBytesParsed += n
 	}
 
-	line := string(data[:lineEnd])
-	parts := strings.Split(line, "\r\n")
+	return totalBytesParsed, nil
+}
 
-	reqLineParts := strings.Split(parts[0], " ")
-	if len(reqLineParts) != 3 {
+func (r *Request) parseSingle(data []byte) (int, error) {
+	switch r.state {
+	case StateInitialized, StateParsingRequestLine:
+		return r.parseRequestLine(data)
+	case StateParsingHeaders:
+		return r.parseHeaders(data)
+	default:
+		return 0, fmt.Errorf("invalid state: %d", r.state)
+	}
+}
+
+func (r *Request) parseRequestLine(data []byte) (int, error) {
+	// At the start of parseRequestLine
+	if r.state == StateInitialized {
+		r.state = StateParsingRequestLine
+	}
+
+	// Find the end of the request line
+	lineEnd := strings.Index(string(data), "\r\n")
+	if lineEnd == -1 {
+		return 0, nil // Need more data
+	}
+
+	// Parse request line
+	line := string(data[:lineEnd])
+	parts := strings.Split(line, " ")
+	if len(parts) != 3 {
 		return 0, errors.New("invalid request line: expected 3 parts")
 	}
 
 	// Validate the HTTP method
-	method := reqLineParts[0]
+	method := parts[0]
 	if !isValidMethod(method) {
 		return 0, errors.New("invalid method: expected GET, POST, PATCH, PUT, or DELETE")
 	}
 
 	// Validate the request target
-	requestTarget := reqLineParts[1]
+	requestTarget := parts[1]
 	if requestTarget == "" || !strings.HasPrefix(requestTarget, "/") {
 		return 0, errors.New("invalid request target: must start with '/'")
 	}
 
 	// Validate the HTTP version
-	httpVersion, err := parseHttpVersion(reqLineParts[2])
+	httpVersion, err := parseHttpVersion(parts[2])
 	if err != nil {
 		return 0, err
 	}
@@ -121,38 +162,64 @@ func (r *Request) parseAndUpdateState(data []byte) (int, error) {
 		HttpVersion:   httpVersion,
 	}
 
-	// Initialize headers if not already done
+	// After successful parsing, update state
+	r.state = StateParsingHeaders
+	return lineEnd + 2, nil
+}
+
+func (r *Request) parseHeaders(data []byte) (int, error) {
+	// Initialize headers if needed
 	if r.Headers == nil {
 		r.Headers = headers.NewHeaders()
 	}
 
-	// Parse headers properly with CRLF
-	headerData := data[len(parts[0])+2 : lineEnd+4] // +2 to skip the CRLF after request line, +4 to include the final CRLF\CRLF
+	// Check if we have the end of headers
+	emptyLinePos := strings.Index(string(data), "\r\n\r\n")
+	if emptyLinePos == -1 {
+		// No empty line found yet, try to parse what we have
+		var bytesParsed int
+		for bytesParsed < len(data) {
+			n, done, err := r.Headers.Parse(data[bytesParsed:])
+			if err != nil {
+				return 0, fmt.Errorf("error parsing headers: %w", err)
+			}
 
-	// Process the header section
+			if n == 0 && !done {
+				// Need more data
+				break
+			}
 
-	for len(headerData) > 0 {
-		n, done, err := r.Headers.Parse(headerData)
-		if err != nil {
-			return 0, fmt.Errorf("error parsing headers: %w", err)
+			bytesParsed += n
+
+			if done {
+				// Found the end marker within this chunk
+				r.state = StateDone
+				break
+			}
 		}
 
-		if done {
-			break
+		return bytesParsed, nil
+	} else {
+		// We have the complete headers section, parse it all
+		totalBytesParsed := 0
+		headerData := data[:emptyLinePos+4] // Include the ending \r\n\r\n
+
+		for totalBytesParsed < len(headerData) {
+			n, done, err := r.Headers.Parse(headerData[totalBytesParsed:])
+			if err != nil {
+				return 0, fmt.Errorf("error parsing headers: %w", err)
+			}
+
+			totalBytesParsed += n
+
+			if done || n == 0 {
+				break
+			}
 		}
 
-		if n == 0 {
-			// Need more data
-			break
-		}
-
-		// Advance through the header data
-		headerData = headerData[n:]
+		r.state = StateDone
+		return emptyLinePos + 4, nil
 	}
-
-	r.state = StateDone
-
-	return lineEnd + 4, nil // +4 to include the final "\r\n\r\n"
 }
 
 func isValidMethod(method string) bool {

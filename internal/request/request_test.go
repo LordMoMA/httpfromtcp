@@ -112,6 +112,52 @@ func TestRequestLineParse(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestRequestHeaders(t *testing.T) {
+	t.Run("Empty Headers", func(t *testing.T) {
+		reader := &chunkReader{
+			data:            "GET / HTTP/1.1\r\n\r\n",
+			numBytesPerRead: 3,
+		}
+		r, err := RequestFromReader(reader)
+		require.NoError(t, err)
+		require.NotNil(t, r)
+		assert.Equal(t, 0, len(r.Headers))
+	})
+
+	t.Run("Duplicate Headers", func(t *testing.T) {
+		reader := &chunkReader{
+			data:            "GET / HTTP/1.1\r\nSet-Person: lane-loves-go\r\nSet-Person: prime-loves-zig\r\n\r\n",
+			numBytesPerRead: 5,
+		}
+		r, err := RequestFromReader(reader)
+		require.NoError(t, err)
+		require.NotNil(t, r)
+		assert.Equal(t, "lane-loves-go, prime-loves-zig", r.Headers["set-person"])
+	})
+
+	t.Run("Case Insensitive Headers", func(t *testing.T) {
+		reader := &chunkReader{
+			data:            "GET / HTTP/1.1\r\nHost: localhost\r\nUSER-AGENT: test\r\n\r\n",
+			numBytesPerRead: 4,
+		}
+		r, err := RequestFromReader(reader)
+		require.NoError(t, err)
+		require.NotNil(t, r)
+		assert.Equal(t, "localhost", r.Headers["host"])
+		assert.Equal(t, "test", r.Headers["user-agent"])
+	})
+
+	t.Run("Missing End of Headers", func(t *testing.T) {
+		reader := &chunkReader{
+			data:            "GET / HTTP/1.1\r\nHost: localhost",
+			numBytesPerRead: 3,
+		}
+		_, err := RequestFromReader(reader)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "incomplete request")
+	})
+}
+
 type chunkReader struct {
 	data            string // The test data we want to simulate
 	numBytesPerRead int    // Simulate reading chunks of specific size
