@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	"httpfromtcp/internal/headers"
@@ -240,4 +241,34 @@ func parseHttpVersion(version string) (string, error) {
 		return "", errors.New("invalid HTTP version: expected 1.1")
 	}
 	return parts[1], nil
+}
+
+// String returns a string representation of the Request in the specified format
+func (r *Request) String() string {
+	var builder strings.Builder
+
+	// Print request line
+	builder.WriteString("Request line:\n")
+	builder.WriteString(fmt.Sprintf("- Method: %s\n", r.RequestLine.Method))
+	builder.WriteString(fmt.Sprintf("- Target: %s\n", r.RequestLine.RequestTarget))
+	builder.WriteString(fmt.Sprintf("- Version: %s\n", r.RequestLine.HttpVersion))
+
+	// Print headers
+	builder.WriteString("Headers:\n")
+	if len(r.Headers) == 0 {
+		builder.WriteString("- No headers\n")
+	} else {
+		// Sort headers by key for consistent output
+		keys := make([]string, 0, len(r.Headers))
+		for k := range r.Headers {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+
+		for _, k := range keys {
+			builder.WriteString(fmt.Sprintf("- %s: %s\n", k, r.Headers[k]))
+		}
+	}
+
+	return builder.String()
 }

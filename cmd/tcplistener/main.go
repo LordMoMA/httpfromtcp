@@ -43,9 +43,22 @@ func main() {
 		// }
 
 		// Print the request details
-		fmt.Printf("Method: %s, Target: %s, HTTP Version: %s\n",
-			req.RequestLine.Method, req.RequestLine.RequestTarget, req.RequestLine.HttpVersion)
+		fmt.Println(req)
 
 		fmt.Println("Connection closed")
 	}
 }
+
+/*
+When you use fmt.Println(req), it can print the format defined in func (r *Request) String() string because of how Go's printing functions work with custom types. This is a fundamental feature of Go's interface system.
+
+How It Works
+The Stringer Interface: Go has a built-in interface in the fmt package called Stringer:
+
+112
+Automatic Interface Implementation: When you define a String() string method for your Request type, it automatically implements the Stringer interface (without explicitly declaring it).
+
+The fmt Package Behavior: When you pass any value to functions like fmt.Println(), fmt.Printf(), etc., the fmt package checks if that value implements the Stringer interface.
+
+Custom String Representation: If the value implements Stringer (by having a String() method), fmt will call that method to get a string representation of your object instead of using the default formatting.
+*/
