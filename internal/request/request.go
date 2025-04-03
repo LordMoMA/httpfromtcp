@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 
 	"httpfromtcp/internal/headers"
@@ -16,6 +17,7 @@ const (
 	StateInitialized = iota // Parser state: initialized, is assigned the value 0
 	StateParsingRequestLine
 	StateParsingHeaders
+	StateParsingBody
 	StateDone // Parser state: done, is assigned the value 3
 )
 
@@ -24,6 +26,7 @@ const bufferSize = 8 // Initial buffer size for reading data
 type Request struct {
 	RequestLine RequestLine
 	Headers     headers.Headers
+	Body        []byte
 	state       int // Parser state
 }
 
@@ -50,21 +53,10 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		n, err := reader.Read(buf[readToIndex:])
 		readToIndex += n // Update the number of bytes read
 
-		// Check for EOF immediately after reading
-		if err == io.EOF {
-			// If we've reached EOF but parsing isn't done, it's an incomplete request
-			if request.state != StateDone {
-				return nil, errors.New("incomplete request")
-			}
-		} else if err != nil {
-			// Handle other errors
-			return nil, err
-		}
-
-		// Parse the data
-		consumed, err := request.parseAndUpdateState(buf[:readToIndex])
-		if err != nil {
-			return nil, err
+		// Parse what we have so far, even if we hit EOF
+		consumed, parseErr := request.parseAndUpdateState(buf[:readToIndex])
+		if parseErr != nil {
+			return nil, parseErr
 		}
 
 		// Remove parsed data from the buffer
@@ -74,6 +66,29 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		// If parsing is done, return the request
 		if request.state == StateDone {
 			break
+		}
+
+		// Now check for errors from the read operation
+		if err == io.EOF {
+			// We hit EOF but parsing isn't done - this means incomplete request
+			// Check if we're in the body parsing phase and have a Content-Length header
+			if request.state == StateParsingBody {
+				contentLengthStr, ok := request.Headers["content-length"]
+				if ok {
+					contentLength, convErr := strconv.Atoi(contentLengthStr)
+					// Only check for short body if Content-Length > 0
+					if convErr == nil && contentLength > 0 && (request.Body == nil || len(request.Body) < contentLength) {
+						return nil, errors.New("Body shorter than reported content length")
+					}
+				}
+				// If we have no Content-Length header or the body is complete, we're done
+				request.state = StateDone
+				break
+			}
+			return nil, errors.New("incomplete request")
+		} else if err != nil {
+			// Handle other errors
+			return nil, err
 		}
 
 		// If we didn't read anything and didn't consume anything, we're stuck
@@ -114,6 +129,8 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 		return r.parseRequestLine(data)
 	case StateParsingHeaders:
 		return r.parseHeaders(data)
+	case StateParsingBody:
+		return r.parseBody(data)
 	default:
 		return 0, fmt.Errorf("invalid state: %d", r.state)
 	}
@@ -194,7 +211,7 @@ func (r *Request) parseHeaders(data []byte) (int, error) {
 
 			if done {
 				// Found the end marker within this chunk
-				r.state = StateDone
+				r.state = StateParsingBody
 				break
 			}
 		}
@@ -218,9 +235,52 @@ func (r *Request) parseHeaders(data []byte) (int, error) {
 			}
 		}
 
-		r.state = StateDone
+		r.state = StateParsingBody
 		return emptyLinePos + 4, nil
 	}
+}
+
+func (r *Request) parseBody(data []byte) (int, error) {
+	if len(data) == 0 {
+		return 0, nil
+	}
+
+	contentLengthStr, ok := r.Headers["content-length"]
+	if !ok {
+		r.state = StateDone
+		return 0, nil // No Content-Length is ok, just means no body
+	}
+
+	contentLength, err := strconv.Atoi(contentLengthStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid Content-Length: %w", err)
+	}
+
+	// If we haven't initialized the body yet, do so now
+	if r.Body == nil {
+		r.Body = make([]byte, 0, contentLength)
+	}
+
+	// Calculate how many bytes we still need
+	bytesNeeded := contentLength - len(r.Body)
+
+	// Calculate how many bytes we can read from the data
+	bytesToCopy := len(data)
+	if bytesToCopy > bytesNeeded {
+		bytesToCopy = bytesNeeded
+	}
+
+	// Copy the available bytes
+	r.Body = append(r.Body, data[:bytesToCopy]...)
+
+	// If we've read the full body, mark as done
+	if len(r.Body) == contentLength {
+		r.state = StateDone
+		return bytesToCopy, nil
+	}
+
+	// Otherwise, we need more data
+	return bytesToCopy, nil
 }
 
 func isValidMethod(method string) bool {
@@ -268,6 +328,14 @@ func (r *Request) String() string {
 		for _, k := range keys {
 			builder.WriteString(fmt.Sprintf("- %s: %s\n", k, r.Headers[k]))
 		}
+	}
+
+	// Print body
+	if r.Body != nil && len(r.Body) > 0 {
+		builder.WriteString("Body:\n")
+		builder.WriteString(fmt.Sprintf("- %s\n", string(r.Body)))
+	} else {
+		builder.WriteString("Body:\n- No body\n")
 	}
 
 	return builder.String()

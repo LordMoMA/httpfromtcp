@@ -158,6 +158,75 @@ func TestRequestHeaders(t *testing.T) {
 	})
 }
 
+func TestRequestBody(t *testing.T) {
+	// Test: Standard Body - valid case with correct content length
+	reader := &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"Content-Length: 13\r\n" +
+			"\r\n" +
+			"hello world!\n",
+		numBytesPerRead: 3,
+	}
+	r, err := RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Equal(t, "hello world!\n", string(r.Body))
+
+	// Test: Empty Body with 0 Content-Length - valid case
+	reader = &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"Content-Length: 0\r\n" +
+			"\r\n",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Empty(t, r.Body)
+
+	// Test: No Content-Length header - valid for requests without body
+	reader = &chunkReader{
+		data: "GET /resource HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"\r\n",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Nil(t, r.Body)
+
+	// Test: Body shorter than reported content length - should error
+	reader = &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"Content-Length: 20\r\n" +
+			"\r\n" +
+			"partial content",
+		numBytesPerRead: 3,
+	}
+	_, err = RequestFromReader(reader)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Body shorter than reported content length")
+
+	// Test: Apparent body present but no Content-Length header
+	// In HTTP/1.1, this is technically invalid for POST requests
+	// Our parser should handle this by ignoring any data after headers without Content-Length
+	reader = &chunkReader{
+		data: "POST /submit HTTP/1.1\r\n" +
+			"Host: localhost:42069\r\n" +
+			"\r\n" +
+			"this body will be ignored",
+		numBytesPerRead: 3,
+	}
+	r, err = RequestFromReader(reader)
+	require.NoError(t, err)
+	require.NotNil(t, r)
+	assert.Nil(t, r.Body)
+}
+
 type chunkReader struct {
 	data            string // The test data we want to simulate
 	numBytesPerRead int    // Simulate reading chunks of specific size
