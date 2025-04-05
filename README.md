@@ -8,6 +8,57 @@ go run ./cmd/tcplistener | tee /tmp/requestline.txt
 curl http://localhost:42069/david/lee
 ```
 
+# Goroutines and Server Architecture
+
+## Why use goroutines?
+
+### go server.listen() in Serve():
+
+This runs the server's listening loop in a background goroutine
+
+Allows Serve() to return immediately rather than blocking
+
+Makes it possible to start the server and still use the main thread for other tasks (like waiting for shutdown signals)
+
+### go s.handle(conn) in listen():
+
+Creates a new goroutine for each incoming connection
+Enables the server to handle multiple connections concurrently
+Prevents one slow client from blocking others
+
+# Method Hierarchy
+
+The methods have a clear hierarchy:
+
+## Serve(port): Top-level function
+
+Creates the server instance
+Sets up the TCP listener
+Initializes the server state
+Starts the listening goroutine
+Returns control to caller
+
+## listen(): Mid-level method
+
+Runs in its own goroutine
+Accepts new connections in a loop
+Spawns a handler goroutine for each new connection
+Continues accepting connections until server is stopped
+
+## handle(conn): Low-level method
+
+Runs in its own goroutine for each client
+Processes a single HTTP request
+Generates the appropriate response
+Closes the connection when finished
+
+## Response helpers: Utility methods
+
+writeSuccessResponse()
+writeErrorResponse()
+
+
+
 # Why Use a Goroutine Here?
 
 You're right that the file must be read sequentially—we can't process data before reading it. The goroutine here doesn't mean things happen out of order; it means:

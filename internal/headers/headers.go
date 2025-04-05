@@ -44,6 +44,15 @@ func NewHeaders() Headers {
 	return make(map[string]string)
 }
 
+func (h Headers) Get(rawKey string) (string, error) {
+	key := strings.ToLower(rawKey)
+	val, ok := h[key]
+	if !ok {
+		return "", errors.New("error finding the value")
+	}
+	return val, nil
+}
+
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	if len(data) == 0 {
 		return 0, false, ErrInvalidData

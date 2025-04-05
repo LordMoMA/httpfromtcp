@@ -276,6 +276,7 @@ func (r *Request) parseBody(data []byte) (int, error) {
 	// If we've read the full body, mark as done
 	if len(r.Body) == contentLength {
 		r.state = StateDone
+		fmt.Printf("Successfully processed the entire length of the data %d\n", bytesToCopy)
 		return bytesToCopy, nil
 	}
 
