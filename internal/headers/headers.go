@@ -53,6 +53,11 @@ func (h Headers) Get(rawKey string) (string, error) {
 	return val, nil
 }
 
+// Set sets a header with the given key and value, replacing any existing header with the same key
+func (h Headers) Set(key, value string) {
+	h[strings.ToLower(key)] = value
+}
+
 func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 	if len(data) == 0 {
 		return 0, false, ErrInvalidData

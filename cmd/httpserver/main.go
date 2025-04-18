@@ -18,14 +18,9 @@ import (
 )
 
 // Handler is a function type that processes an HTTP request and writes a response
-type Handler func(req *request.Request, w io.Writer) *HandlerError
+type Handler func(req *request.Request, w *response.Writer)
 
-// HandlerError represents an error that occurred during request handling
-type HandlerError struct {
-	StatusCode response.StatusCode
-	Message    string
-}
-
+// Server struct definition remains the same
 type Server struct {
 	Addr     string
 	Port     int
@@ -80,53 +75,6 @@ func (s *Server) listen() {
 	}
 }
 
-// writeHttpResponse writes the complete HTTP response to the connection.
-func writeHttpResponse(conn io.Writer, statusCode response.StatusCode, customHeaders headers.Headers, body []byte) {
-	log.Printf("Writing response: status=%d, body_len=%d", statusCode, len(body))
-
-	// Write status line
-	if err := response.WriteStatusLine(conn, statusCode); err != nil {
-		log.Printf("Error writing status line: %v", err)
-		// Attempt to close connection if possible, otherwise just return
-		if closer, ok := conn.(io.Closer); ok {
-			closer.Close()
-		}
-		return
-	}
-
-	// Prepare headers
-	h := response.GetDefaultHeaders(len(body))
-	// Override defaults with custom headers if provided
-	if customHeaders != nil {
-		for k, v := range customHeaders {
-			h[k] = v // Assumes customHeaders keys are already lowercase
-		}
-	}
-	// Ensure connection is closed for simplicity in this server
-	h["connection"] = "close"
-
-	// Write headers
-	if err := response.WriteHeaders(conn, h); err != nil {
-		log.Printf("Error writing headers: %v", err)
-		if closer, ok := conn.(io.Closer); ok {
-			closer.Close()
-		}
-		return
-	}
-
-	// Write body if present
-	if len(body) > 0 {
-		if _, err := conn.Write(body); err != nil {
-			log.Printf("Error writing body: %v", err)
-			// Connection likely broken, attempt close
-			if closer, ok := conn.(io.Closer); ok {
-				closer.Close()
-			}
-			return
-		}
-	}
-}
-
 func (s *Server) handle(conn net.Conn) {
 	defer conn.Close()
 
@@ -154,46 +102,52 @@ func (s *Server) handle(conn net.Conn) {
 					HttpVersion:   "1.1",
 				},
 				Headers: make(map[string]string),
+				Body:    nil,
 			}
-			responseBuffer := new(bytes.Buffer) // Use buffer even for error cases
-			handlerErr := s.Handler(minimalReq, responseBuffer)
-			if handlerErr != nil {
-				// Use writeHttpResponse for handler errors triggered by path extraction
-				writeHttpResponse(conn, handlerErr.StatusCode, nil, []byte(handlerErr.Message))
-				return
+
+			// Use new response Writer
+			respWriter := response.NewWriter(conn)
+			s.Handler(minimalReq, respWriter)
+
+			// Flush the response
+			if err := respWriter.Flush(); err != nil {
+				log.Printf("Error flushing response: %v", err)
 			}
-			// If handler somehow succeeded despite initial parse error (unlikely but handle)
-			writeHttpResponse(conn, response.StatusOK, nil, responseBuffer.Bytes())
 			return
 		}
 
 		// Generic bad request if path extraction failed or wasn't applicable
-		writeHttpResponse(conn, response.StatusBadRequest, nil, []byte("Invalid request format\n"))
+		respWriter := response.NewWriter(conn)
+		respWriter.WriteStatusLine(response.StatusBadRequest)
+
+		// Set headers
+		headers := headers.NewHeaders()
+		headers.Set("Content-Type", "text/html; charset=utf-8")
+		respWriter.WriteHeaders(headers)
+
+		// Write body
+		respWriter.WriteBody([]byte("Invalid request format\n"))
+
+		// Flush response
+		if err := respWriter.Flush(); err != nil {
+			log.Printf("Error flushing response: %v", err)
+		}
 		return
 	}
 
 	// Log successful request parsing
 	log.Printf("Received %s request for %s", req.RequestLine.Method, req.RequestLine.RequestTarget)
 
-	// Create a buffer for the handler to write the response body
-	responseBuffer := new(bytes.Buffer)
+	// Create response writer and pass to handler
+	respWriter := response.NewWriter(conn)
 
-	// Call the handler
-	handlerErr := s.Handler(req, responseBuffer)
+	// Call the handler with the new Writer
+	s.Handler(req, respWriter)
 
-	// Handle errors if they occurred
-	if handlerErr != nil {
-		// Use writeHttpResponse for handler errors
-		// Create minimal headers for error response (e.g., text/plain)
-		errorHeaders := headers.NewHeaders()
-		errorHeaders["content-type"] = "text/plain; charset=utf-8"
-		writeHttpResponse(conn, handlerErr.StatusCode, errorHeaders, []byte(handlerErr.Message))
-		return
+	// Flush the response to send it
+	if err := respWriter.Flush(); err != nil {
+		log.Printf("Error flushing response: %v", err)
 	}
-
-	// No error occurred, write success response using writeHttpResponse
-	responseBody := responseBuffer.Bytes()
-	writeHttpResponse(conn, response.StatusOK, nil, responseBody) // Pass nil for default headers
 }
 
 // extractPathFromRawRequest is a helper function to get the path from a raw HTTP request
@@ -215,28 +169,64 @@ func extractPathFromRawRequest(rawRequest string) string {
 const port = 42069
 
 func main() {
-	// Define our custom handler with debug logging
-	handler := func(req *request.Request, w io.Writer) *HandlerError {
+	// HTML content for responses
+	badRequestHTML := `<html>
+  <head>
+    <title>400 Bad Request</title>
+  </head>
+  <body>
+    <h1>Bad Request</h1>
+    <p>Your request honestly kinda sucked.</p>
+  </body>
+</html>`
+
+	serverErrorHTML := `<html>
+  <head>
+    <title>500 Internal Server Error</title>
+  </head>
+  <body>
+    <h1>Internal Server Error</h1>
+    <p>Okay, you know what? This one is on me.</p>
+  </body>
+</html>`
+
+	successHTML := `<html>
+  <head>
+    <title>200 OK</title>
+  </head>
+  <body>
+    <h1>Success!</h1>
+    <p>Your request was an absolute banger.</p>
+  </body>
+</html>`
+
+	// Define our custom handler with the new signature
+	handler := func(req *request.Request, w *response.Writer) {
 		log.Printf("Handler called with path: %s", req.RequestLine.RequestTarget)
+
+		// Set up common HTML headers
+		htmlHeaders := headers.NewHeaders()
+		htmlHeaders.Set("Content-Type", "text/html; charset=utf-8")
+		htmlHeaders.Set("Connection", "close")
 
 		switch req.RequestLine.RequestTarget {
 		case "/yourproblem":
 			log.Printf("Matched /yourproblem route")
-			return &HandlerError{
-				StatusCode: response.StatusBadRequest,
-				Message:    "Your problem is not my problem\n",
-			}
+			w.WriteStatusLine(response.StatusBadRequest)
+			w.WriteHeaders(htmlHeaders)
+			w.WriteBody([]byte(badRequestHTML))
+
 		case "/myproblem":
 			log.Printf("Matched /myproblem route")
-			return &HandlerError{
-				StatusCode: response.StatusServerError,
-				Message:    "Woopsie, my bad\n",
-			}
+			w.WriteStatusLine(response.StatusServerError)
+			w.WriteHeaders(htmlHeaders)
+			w.WriteBody([]byte(serverErrorHTML))
+
 		default:
 			log.Printf("Using default route")
-			// Write success response
-			io.WriteString(w, "All good, frfr\n")
-			return nil
+			w.WriteStatusLine(response.StatusOK)
+			w.WriteHeaders(htmlHeaders)
+			w.WriteBody([]byte(successHTML))
 		}
 	}
 
