@@ -290,6 +290,45 @@ func proxyToHttpbin(path string, w *response.Writer) {
 	}
 }
 
+// serveVideo serves the video file from the assets directory
+func serveVideo(w *response.Writer) {
+	log.Printf("Serving video file")
+
+	// Set the status code to OK
+	w.WriteStatusLine(response.StatusOK)
+
+	// Read the video file from the assets directory
+	videoData, err := os.ReadFile("assets/vim.mp4")
+	if err != nil {
+		log.Printf("Error reading video file: %v", err)
+
+		// Return an error if we can't read the file
+		w.WriteStatusLine(response.StatusServerError)
+		h := headers.NewHeaders()
+		h.Set("Content-Type", "text/html; charset=utf-8")
+		h.Set("Connection", "close")
+		w.WriteHeaders(h)
+		w.WriteBody([]byte("<html><body><h1>Error</h1><p>Could not load video file</p></body></html>"))
+		return
+	}
+
+	// Set up headers for video content
+	h := headers.NewHeaders()
+	h.Set("Content-Type", "video/mp4")
+	h.Set("Connection", "close")
+	h.Set("Accept-Ranges", "bytes")
+	h.Set("Content-Length", fmt.Sprintf("%d", len(videoData)))
+	w.WriteHeaders(h)
+
+	// Write the video data to the response
+	_, err = w.WriteBody(videoData)
+	if err != nil {
+		log.Printf("Error writing video data: %v", err)
+	}
+
+	log.Printf("Successfully served video file of size %d bytes", len(videoData))
+}
+
 func main() {
 	// HTML content for responses
 	badRequestHTML := `<html>
@@ -325,6 +364,12 @@ func main() {
 	// Define our custom handler with the new signature
 	handler := func(req *request.Request, w *response.Writer) {
 		log.Printf("Handler called with path: %s", req.RequestLine.RequestTarget)
+
+		// Check if this is a request for the video file
+		if req.RequestLine.RequestTarget == "/video" {
+			serveVideo(w)
+			return
+		}
 
 		// Check if this is a request to be proxied to httpbin.org
 		if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin") {
