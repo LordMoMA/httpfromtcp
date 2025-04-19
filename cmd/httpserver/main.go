@@ -229,8 +229,11 @@ func proxyToHttpbin(path string, w *response.Writer) {
 
 	w.WriteHeaders(h)
 
-	// Create a buffer to collect the full response body for SHA-256 calculation
-	var fullResponseBody bytes.Buffer
+	// Initialize hash at the beginning
+	hasher := sha256.New()
+
+	// Track content length
+	var contentLength int64
 
 	// Read and forward the response body in chunks
 	buffer := make([]byte, 1024) // Buffer size (you can adjust this)
@@ -239,8 +242,11 @@ func proxyToHttpbin(path string, w *response.Writer) {
 		log.Printf("Read %d bytes from httpbin", n)
 
 		if n > 0 {
-			// Store a copy for SHA-256 calculation
-			fullResponseBody.Write(buffer[:n])
+			// Update hash with this chunk
+			hasher.Write(buffer[:n])
+
+			// Update content length counter
+			contentLength += int64(n)
 
 			// Write this chunk to the client
 			_, writeErr := w.WriteChunkedBody(buffer[:n])
@@ -268,15 +274,14 @@ func proxyToHttpbin(path string, w *response.Writer) {
 		return
 	}
 
-	// Calculate SHA-256 hash of the full response body
-	bodyBytes := fullResponseBody.Bytes()
-	hash := sha256.Sum256(bodyBytes)
-	hashString := hex.EncodeToString(hash[:])
+	// Get final hash
+	finalHash := hasher.Sum(nil)
+	hashString := hex.EncodeToString(finalHash)
 
 	// Create trailers
 	trailers := headers.NewHeaders()
 	trailers.Set("X-Content-SHA256", hashString)
-	trailers.Set("X-Content-Length", fmt.Sprintf("%d", fullResponseBody.Len()))
+	trailers.Set("X-Content-Length", fmt.Sprintf("%d", contentLength))
 
 	// Write trailers
 	err = w.WriteTrailers(trailers)
