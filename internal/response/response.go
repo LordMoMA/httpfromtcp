@@ -99,6 +99,37 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 	return n, nil
 }
 
+/*
+HTTP/1.1 200 OK
+Content-Type: text/plain
+Transfer-Encoding: chunked
+
+<n>/r/n
+<data of length n>/r/n
+<n>/r/n
+<data of length n>/r/n
+<n>/r/n
+<data of length n>/r/n
+<n>/r/n
+<data of length n>/r/n
+... repeat ...
+0\r\n
+\r\n
+--------------------------
+
+HTTP/1.1 200 OK
+Content-Type: text/plain
+Transfer-Encoding: chunked
+
+1E
+I could go for a cup of coffee
+B
+But not Java
+12
+Never go full Java
+0
+*/
+
 // WriteChunkedBody writes the provided bytes to the response body using chunked encoding
 // Each chunk is prefixed with the chunk size in hexadecimal followed by CRLF
 // and is terminated with CRLF
