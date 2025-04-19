@@ -25,6 +25,8 @@ const (
 	stateStatusWritten
 	stateHeadersWritten
 	stateBodyWritten
+	stateChunkedBodyStarted
+	stateChunkedBodyDone
 )
 
 // ErrInvalidWriteState is returned when methods are called in the wrong order
@@ -38,6 +40,7 @@ type Writer struct {
 	body       *bytes.Buffer
 	writer     io.Writer
 	state      int
+	chunked    bool
 }
 
 // NewWriter creates a new response writer
@@ -72,6 +75,11 @@ func (w *Writer) WriteHeaders(h headers.Headers) error {
 		w.headers[k] = v
 	}
 
+	// Check if we're using chunked encoding
+	if value, exists := w.headers["transfer-encoding"]; exists && value == "chunked" {
+		w.chunked = true
+	}
+
 	w.state = stateHeadersWritten
 	return nil
 }
@@ -91,6 +99,63 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 	return n, nil
 }
 
+// WriteChunkedBody writes the provided bytes to the response body using chunked encoding
+// Each chunk is prefixed with the chunk size in hexadecimal followed by CRLF
+// and is terminated with CRLF
+func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
+	// We can start chunked body mode either right after setting headers
+	// or after having written previous chunks
+	if w.state != stateHeadersWritten && w.state != stateChunkedBodyStarted {
+		return 0, ErrInvalidWriteState
+	}
+
+	// Mark that we're using chunked encoding
+	w.chunked = true
+	w.state = stateChunkedBodyStarted
+
+	// If there's no data to write, don't create a chunk
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	// Write chunk size in hex followed by CRLF
+	chunkSizeHex := fmt.Sprintf("%x", len(p))
+	_, err := fmt.Fprintf(w.writer, "%s\r\n", chunkSizeHex)
+	if err != nil {
+		return 0, err
+	}
+
+	// Write the actual chunk data
+	n, err := w.writer.Write(p)
+	if err != nil {
+		return n, err
+	}
+
+	// Write the trailing CRLF
+	_, err = fmt.Fprint(w.writer, "\r\n")
+	if err != nil {
+		return n, err
+	}
+
+	return n, nil
+}
+
+// WriteChunkedBodyDone completes a chunked transfer by writing the final "0\r\n\r\n"
+func (w *Writer) WriteChunkedBodyDone() (int, error) {
+	if w.state != stateChunkedBodyStarted {
+		return 0, ErrInvalidWriteState
+	}
+
+	// Write the final chunk with zero size
+	_, err := fmt.Fprint(w.writer, "0\r\n\r\n")
+	if err != nil {
+		return 0, err
+	}
+
+	w.state = stateChunkedBodyDone
+	return 0, nil
+}
+
 // Flush finalizes and sends the complete HTTP response to the underlying writer
 func (w *Writer) Flush() error {
 	// Ensure we've at least set a status code and headers
@@ -103,11 +168,18 @@ func (w *Writer) Flush() error {
 		w.WriteHeaders(headers.NewHeaders())
 	}
 
+	// Skip further processing if we're already in chunked mode
+	if w.state == stateChunkedBodyStarted || w.state == stateChunkedBodyDone {
+		return nil
+	}
+
 	// Get the body as bytes
 	bodyBytes := w.body.Bytes()
 
-	// Add or update content-length header based on body size
-	w.headers["content-length"] = fmt.Sprintf("%d", len(bodyBytes))
+	// Add or update content-length header based on body size (only if not chunked)
+	if !w.chunked {
+		w.headers["content-length"] = fmt.Sprintf("%d", len(bodyBytes))
+	}
 
 	// Write status line
 	var reasonPhrase string
@@ -139,8 +211,8 @@ func (w *Writer) Flush() error {
 		return err
 	}
 
-	// Write body if present
-	if len(bodyBytes) > 0 {
+	// Write body if present and not chunked
+	if !w.chunked && len(bodyBytes) > 0 {
 		_, err = w.writer.Write(bodyBytes)
 		if err != nil {
 			return err

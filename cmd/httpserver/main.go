@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -168,6 +169,93 @@ func extractPathFromRawRequest(rawRequest string) string {
 
 const port = 42069
 
+// proxyToHttpbin handles requests to the /httpbin endpoint by proxying to httpbin.org
+func proxyToHttpbin(path string, w *response.Writer) {
+	// Extract the actual path to forward to httpbin.org
+	httpbinPath := strings.TrimPrefix(path, "/httpbin")
+	httpbinURL := "https://httpbin.org" + httpbinPath
+
+	log.Printf("Proxying request to: %s", httpbinURL)
+
+	// Make HTTP request to httpbin.org
+	resp, err := http.Get(httpbinURL)
+	if err != nil {
+		log.Printf("Error making request to httpbin: %v", err)
+		w.WriteStatusLine(response.StatusServerError)
+		h := headers.NewHeaders()
+		h.Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeaders(h)
+		w.WriteBody([]byte("<html><body><h1>Proxy Error</h1><p>Failed to connect to httpbin.org</p></body></html>"))
+		return
+	}
+	defer resp.Body.Close()
+
+	// Set status code based on httpbin response
+	var statusCode response.StatusCode
+	switch resp.StatusCode {
+	case 200:
+		statusCode = response.StatusOK
+	case 400:
+		statusCode = response.StatusBadRequest
+	case 500:
+		statusCode = response.StatusServerError
+	default:
+		// Default to OK for other status codes since we don't have all mappings
+		statusCode = response.StatusOK
+	}
+	w.WriteStatusLine(statusCode)
+
+	// Set up headers for chunked encoding
+	h := headers.NewHeaders()
+
+	// Copy relevant headers from the httpbin response
+	for key, values := range resp.Header {
+		if strings.ToLower(key) != "content-length" { // Skip content-length as we're using chunked
+			h.Set(key, strings.Join(values, ", "))
+		}
+	}
+
+	// Set transfer encoding to chunked
+	h.Set("Transfer-Encoding", "chunked")
+
+	// Set connection to close
+	h.Set("Connection", "close")
+
+	w.WriteHeaders(h)
+
+	// Read and forward the response body in chunks
+	buffer := make([]byte, 1024) // Buffer size (you can adjust this)
+	for {
+		n, err := resp.Body.Read(buffer)
+		log.Printf("Read %d bytes from httpbin", n)
+
+		if n > 0 {
+			// Write this chunk to the client
+			_, writeErr := w.WriteChunkedBody(buffer[:n])
+			if writeErr != nil {
+				log.Printf("Error writing chunk: %v", writeErr)
+				break
+			}
+		}
+
+		if err == io.EOF {
+			// End of response body
+			break
+		}
+
+		if err != nil {
+			log.Printf("Error reading from httpbin: %v", err)
+			break
+		}
+	}
+
+	// Finish the chunked response
+	_, err = w.WriteChunkedBodyDone()
+	if err != nil {
+		log.Printf("Error finalizing chunked response: %v", err)
+	}
+}
+
 func main() {
 	// HTML content for responses
 	badRequestHTML := `<html>
@@ -203,6 +291,12 @@ func main() {
 	// Define our custom handler with the new signature
 	handler := func(req *request.Request, w *response.Writer) {
 		log.Printf("Handler called with path: %s", req.RequestLine.RequestTarget)
+
+		// Check if this is a request to be proxied to httpbin.org
+		if strings.HasPrefix(req.RequestLine.RequestTarget, "/httpbin") {
+			proxyToHttpbin(req.RequestLine.RequestTarget, w)
+			return
+		}
 
 		// Set up common HTML headers
 		htmlHeaders := headers.NewHeaders()
