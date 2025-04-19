@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"httpfromtcp/internal/headers" // Import headers package
 	"httpfromtcp/internal/request"
@@ -210,7 +212,8 @@ func proxyToHttpbin(path string, w *response.Writer) {
 
 	// Copy relevant headers from the httpbin response
 	for key, values := range resp.Header {
-		if strings.ToLower(key) != "content-length" { // Skip content-length as we're using chunked
+		// Skip content-length as we're using chunked encoding
+		if strings.ToLower(key) != "content-length" {
 			h.Set(key, strings.Join(values, ", "))
 		}
 	}
@@ -218,10 +221,16 @@ func proxyToHttpbin(path string, w *response.Writer) {
 	// Set transfer encoding to chunked
 	h.Set("Transfer-Encoding", "chunked")
 
+	// Announce the trailers we'll be sending
+	h.Set("Trailer", "X-Content-SHA256, X-Content-Length")
+
 	// Set connection to close
 	h.Set("Connection", "close")
 
 	w.WriteHeaders(h)
+
+	// Create a buffer to collect the full response body for SHA-256 calculation
+	var fullResponseBody bytes.Buffer
 
 	// Read and forward the response body in chunks
 	buffer := make([]byte, 1024) // Buffer size (you can adjust this)
@@ -230,6 +239,9 @@ func proxyToHttpbin(path string, w *response.Writer) {
 		log.Printf("Read %d bytes from httpbin", n)
 
 		if n > 0 {
+			// Store a copy for SHA-256 calculation
+			fullResponseBody.Write(buffer[:n])
+
 			// Write this chunk to the client
 			_, writeErr := w.WriteChunkedBody(buffer[:n])
 			if writeErr != nil {
@@ -249,10 +261,27 @@ func proxyToHttpbin(path string, w *response.Writer) {
 		}
 	}
 
-	// Finish the chunked response
+	// Finish the chunked body (writes the "0\r\n" marker)
 	_, err = w.WriteChunkedBodyDone()
 	if err != nil {
 		log.Printf("Error finalizing chunked response: %v", err)
+		return
+	}
+
+	// Calculate SHA-256 hash of the full response body
+	bodyBytes := fullResponseBody.Bytes()
+	hash := sha256.Sum256(bodyBytes)
+	hashString := hex.EncodeToString(hash[:])
+
+	// Create trailers
+	trailers := headers.NewHeaders()
+	trailers.Set("X-Content-SHA256", hashString)
+	trailers.Set("X-Content-Length", fmt.Sprintf("%d", fullResponseBody.Len()))
+
+	// Write trailers
+	err = w.WriteTrailers(trailers)
+	if err != nil {
+		log.Printf("Error writing trailers: %v", err)
 	}
 }
 

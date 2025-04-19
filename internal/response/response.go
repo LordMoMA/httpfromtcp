@@ -27,6 +27,7 @@ const (
 	stateBodyWritten
 	stateChunkedBodyStarted
 	stateChunkedBodyDone
+	stateTrailersWritten
 )
 
 // ErrInvalidWriteState is returned when methods are called in the wrong order
@@ -41,15 +42,17 @@ type Writer struct {
 	writer     io.Writer
 	state      int
 	chunked    bool
+	trailers   headers.Headers
 }
 
 // NewWriter creates a new response writer
 func NewWriter(w io.Writer) *Writer {
 	return &Writer{
-		headers: headers.NewHeaders(),
-		body:    new(bytes.Buffer),
-		writer:  w,
-		state:   stateInitialized,
+		headers:  headers.NewHeaders(),
+		body:     new(bytes.Buffer),
+		writer:   w,
+		state:    stateInitialized,
+		trailers: headers.NewHeaders(),
 	}
 }
 
@@ -178,13 +181,37 @@ func (w *Writer) WriteChunkedBodyDone() (int, error) {
 	}
 
 	// Write the final chunk with zero size
-	_, err := fmt.Fprint(w.writer, "0\r\n\r\n")
+	_, err := fmt.Fprint(w.writer, "0\r\n")
 	if err != nil {
 		return 0, err
 	}
 
 	w.state = stateChunkedBodyDone
 	return 0, nil
+}
+
+// WriteTrailers writes the provided trailer headers after the chunked body is complete
+func (w *Writer) WriteTrailers(h headers.Headers) error {
+	if w.state != stateChunkedBodyDone {
+		return ErrInvalidWriteState
+	}
+
+	// Write trailers as headers
+	for key, value := range h {
+		_, err := fmt.Fprintf(w.writer, "%s: %s\r\n", key, value)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Write the final empty line
+	_, err := fmt.Fprint(w.writer, "\r\n")
+	if err != nil {
+		return err
+	}
+
+	w.state = stateTrailersWritten
+	return nil
 }
 
 // Flush finalizes and sends the complete HTTP response to the underlying writer
@@ -199,9 +226,15 @@ func (w *Writer) Flush() error {
 		w.WriteHeaders(headers.NewHeaders())
 	}
 
-	// Skip further processing if we're already in chunked mode
-	if w.state == stateChunkedBodyStarted || w.state == stateChunkedBodyDone {
+	// Skip further processing if we're already in chunked mode with trailers
+	if w.state == stateTrailersWritten {
 		return nil
+	}
+
+	// If we're in chunked mode but no trailers were written, write the final CRLF
+	if w.state == stateChunkedBodyDone {
+		_, err := fmt.Fprint(w.writer, "\r\n")
+		return err
 	}
 
 	// Get the body as bytes

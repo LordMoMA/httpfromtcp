@@ -6,6 +6,21 @@ go run ./cmd/tcplistener | tee /tmp/requestline.txt
 
 # in another one
 curl http://localhost:42069/david/lee
+
+```
+
+## test chucked encoding
+
+The code creates a data pipeline where information flows from httpbin → your server → your client, without ever holding the entire response in memory at once.
+
+```bash
+# start the server in one terminal session
+go run ./cmd/httpserver
+
+# make a request in another session
+echo -e "GET /httpbin/html HTTP/1.1\r\nHost: local
+host:42069\r\nConnection: close\r\n\r\n" | nc localhost 42069
+
 ```
 
 # Goroutines and Server Architecture
